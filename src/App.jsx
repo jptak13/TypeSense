@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import './App.css';
-import { generateParagraph } from './utils/generateSentence';
+import { generateParagraph, generateParagraphExactWords } from './utils/generateSentence';
 
 /*
   WHY:
@@ -39,7 +39,9 @@ function formatTime(seconds) {
 
 function App() {
   const [userInput, setUserInput]           = useState("");
-  const [targetSentence, setTargetSentence] = useState(() => generateParagraph(LENGTH_CONFIG.medium.chars));
+  const [targetSentence, setTargetSentence] = useState(
+    () => generateParagraphExactWords(LENGTH_CONFIG.medium.words)
+  );
   const [timeElapsed, setTimeElapsed]       = useState(0);
   const [hasStarted, setHasStarted]         = useState(false);
   const [testMode, setTestMode]             = useState('words');
@@ -47,12 +49,14 @@ function App() {
   const [timeLimit, setTimeLimit]           = useState(60);
   const [themeOverride, setThemeOverride]   = useState(null);
   const [showSettings, setShowSettings]     = useState(false);
+  const [hasMoreBelow, setHasMoreBelow]     = useState(false);
 
   const inputRef        = useRef(null);
   const timerRef        = useRef(null);
   const settingsRef     = useRef(null);
   const lastTypeTimeRef = useRef(0);
-  const displayRef      = useRef(null);
+  const scrollRef       = useRef(null);
+  const cursorRef       = useRef(null);
 
   useEffect(() => { inputRef.current.focus(); }, []);
 
@@ -90,14 +94,51 @@ function App() {
     }
   }, [timeElapsed, testMode, hasStarted, timeLimit]);
 
-  // Keep the caret area near the bottom of the viewport as you type,
-  // so completed lines naturally scroll up out of view.
+  /*
+    Scroll behavior — mimic Monkeytype-style "locked" active line:
+    - Text flows naturally and wraps by the browser; we don't pre-split into lines.
+    - We track the DOM position of the active character span (.char-cursor).
+    - Once that cursor visually reaches the 3rd line, we programmatically scroll
+      the inner container so the active line stays on the 2nd line.
+  */
   useEffect(() => {
-    if (displayRef.current) {
-      const el = displayRef.current;
-      el.scrollTop = el.scrollHeight;
+    const container = scrollRef.current;
+    const cursor    = cursorRef.current;
+
+    if (!container) return;
+
+    const updateHasMoreBelow = () => {
+      const remaining =
+        container.scrollHeight - (container.scrollTop + container.clientHeight);
+      setHasMoreBelow(remaining > 1);
+    };
+
+    // When there's no active cursor (e.g., test finished), just update fade state
+    if (!cursor) {
+      updateHasMoreBelow();
+      return;
     }
-  }, [userInput.length, targetSentence]);
+
+    const style       = window.getComputedStyle(container);
+    const lineHeight  = parseFloat(style.lineHeight);
+    if (!lineHeight || Number.isNaN(lineHeight)) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const cursorRect    = cursor.getBoundingClientRect();
+
+    // Cursor position in content coordinates (accounting for existing scroll)
+    const offsetTop = (cursorRect.top - containerRect.top) + container.scrollTop;
+
+    const secondLineTop = lineHeight * 1; // lock target
+    const thirdLineTop  = lineHeight * 2;
+
+    if (offsetTop >= thirdLineTop) {
+      const desiredScrollTop = offsetTop - secondLineTop;
+      container.scrollTop = desiredScrollTop;
+    }
+
+    updateHasMoreBelow();
+  }, [userInput, targetSentence, testMode, timeLimit, hasStarted]);
 
   const startTimer = () => {
     if (timerRef.current) return;
@@ -111,13 +152,22 @@ function App() {
     }, 1000);
   };
 
-  const resetPassage = (chars) => {
+  const resetPassage = ({ minChars, exactWords }) => {
     clearInterval(timerRef.current);
     timerRef.current = null;
     setTimeElapsed(0);
     setHasStarted(false);
     setUserInput("");
-    setTargetSentence(generateParagraph(chars));
+    // Reset scroll position and fade state so the new passage always starts at the top.
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
+    }
+    setHasMoreBelow(false);
+    const text =
+      typeof exactWords === 'number'
+        ? generateParagraphExactWords(exactWords)
+        : generateParagraph(minChars);
+    setTargetSentence(text);
     inputRef.current.focus();
   };
 
@@ -138,23 +188,30 @@ function App() {
 
   const handleModeChange = (newMode) => {
     setTestMode(newMode);
-    const chars = newMode === 'time' ? TIME_MODE_CHARS : LENGTH_CONFIG[length].chars;
-    resetPassage(chars);
+    if (newMode === 'time') {
+      resetPassage({ minChars: TIME_MODE_CHARS });
+    } else {
+      resetPassage({ exactWords: LENGTH_CONFIG[length].words });
+    }
   };
 
   const handleLengthChange = (newLength) => {
     setLength(newLength);
-    resetPassage(LENGTH_CONFIG[newLength].chars);
+    // Length only applies in words mode; regenerate to hit exact word count.
+    resetPassage({ exactWords: LENGTH_CONFIG[newLength].words });
   };
 
   const handleTimeLimitChange = (newLimit) => {
     setTimeLimit(newLimit);
-    resetPassage(TIME_MODE_CHARS);
+    resetPassage({ minChars: TIME_MODE_CHARS });
   };
 
   const handleNewPassage = () => {
-    const chars = testMode === 'time' ? TIME_MODE_CHARS : LENGTH_CONFIG[length].chars;
-    resetPassage(chars);
+    if (testMode === 'time') {
+      resetPassage({ minChars: TIME_MODE_CHARS });
+    } else {
+      resetPassage({ exactWords: LENGTH_CONFIG[length].words });
+    }
   };
 
   const toggleTheme = () => {
@@ -178,6 +235,15 @@ function App() {
   const wpm = timeElapsed > 0
     ? Math.round((userInput.length / 5) / (timeElapsed / 60))
     : 0;
+
+  // Words progress (words mode): how many completed words vs total in passage.
+  const totalWords = targetSentence.trim().split(/\s+/).filter(Boolean).length;
+  const completedWords = (() => {
+    if (!userInput) return 0;
+    const spaceMatches = userInput.match(/ /g);
+    const count = spaceMatches ? spaceMatches.length : 0;
+    return Math.min(count, totalWords);
+  })();
 
   return (
     <div className="app-container">
@@ -216,10 +282,19 @@ function App() {
       <div className="toolbar">
         {/* Timer + WPM stats */}
         <div className="timer-group">
-          <div className="timer-stat">
-            <span className="timer-value">{displayTime}</span>
-            <span className="timer-label">{testMode === 'time' ? 'LEFT' : 'TIME'}</span>
-          </div>
+          {testMode === 'words' ? (
+            <div className="timer-stat">
+              <span className="timer-value">
+                {completedWords} / {totalWords}
+              </span>
+              <span className="timer-label">WORDS</span>
+            </div>
+          ) : (
+            <div className="timer-stat">
+              <span className="timer-value">{displayTime}</span>
+              <span className="timer-label">LEFT</span>
+            </div>
+          )}
           <div className="timer-divider" />
           <div className="timer-stat">
             <span className="timer-value">{wpm}</span>
@@ -292,30 +367,41 @@ function App() {
 
       <div className="typing-area-wrapper">
         <div
-          ref={displayRef}
-          className={`typing-display${isTimeDone ? ' test-done' : ''}`}
+          className={
+            `typing-display${isTimeDone ? ' test-done' : ''}${
+              hasMoreBelow ? ' show-bottom-fade' : ''
+            }`
+          }
           onClick={() => inputRef.current.focus()}
         >
-          {targetSentence.split('').map((char, i) => {
-            let className = 'char-untyped';
-            if (i < userInput.length) {
-              className = userInput[i] === char ? 'char-correct' : 'char-wrong';
-            } else if (i === userInput.length && !isTimeDone) {
-              className = 'char-cursor';
-            }
-            return (
-              <span key={i} className={className}>
-                {char}
-              </span>
-            );
-          })}
-
           <input
             ref={inputRef}
             className="hidden-input"
             value={userInput}
             onChange={handleTyping}
           />
+          <div className="typing-scroll" ref={scrollRef}>
+            {targetSentence.split('').map((char, index) => {
+              let className = 'char-untyped';
+              if (index < userInput.length) {
+                className = userInput[index] === char ? 'char-correct' : 'char-wrong';
+              } else if (index === userInput.length && !isTimeDone) {
+                className = 'char-cursor';
+              }
+
+              const isCursor = className === 'char-cursor';
+
+              return (
+                <span
+                  key={index}
+                  className={className}
+                  ref={isCursor ? cursorRef : null}
+                >
+                  {char}
+                </span>
+              );
+            })}
+          </div>
         </div>
       </div>
 

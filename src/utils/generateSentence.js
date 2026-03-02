@@ -101,7 +101,7 @@ const nouns = [
   }
   
   /*
-    WHY — character threshold approach:
+    WHY — character threshold approach (time mode):
     Instead of generating a fixed number of sentences (which produces inconsistent
     lengths), we keep generating until the total character count exceeds a minimum.
     This ensures the text box always looks full regardless of how long each
@@ -115,6 +115,57 @@ const nouns = [
       sentences.push(s);
       total += s.length + 2;
     }
+    return sentences.join('. ') + '.';
+  }
+
+  /*
+    WHY — exact word-count approach (words mode):
+    For word-based tests we want the passage to contain *exactly* N words.
+    We:
+      - Keep adding whole sentences while we are under or exactly at the target.
+      - If the *next* sentence would push us over the target, we roll back the
+        last 3 sentences and try generating new ones.
+    This random search with backtracking usually finds an exact fit quickly while
+    still giving very natural sentence boundaries.
+  */
+  export function generateParagraphExactWords(targetWords) {
+    const sentences = [];
+
+    const countWords = (text) =>
+      text
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean).length;
+
+    let totalWords = 0;
+    let safety = 0;
+    const MAX_ITERATIONS = 10000;
+
+    while (totalWords !== targetWords && safety < MAX_ITERATIONS) {
+      safety += 1;
+
+      const sentence = generateSentence();
+      const sentenceWords = countWords(sentence);
+
+      // If adding this sentence would overshoot, roll back last 3 sentences
+      // and try a different combination.
+      if (totalWords + sentenceWords > targetWords) {
+        for (let i = 0; i < 3 && sentences.length > 0; i++) {
+          const removed = sentences.pop();
+          totalWords -= countWords(removed);
+        }
+        continue;
+      }
+
+      sentences.push(sentence);
+      totalWords += sentenceWords;
+    }
+
+    // Fallback: if we somehow couldn't hit the exact target, just join whatever we have.
+    if (sentences.length === 0) {
+      return generateSentence() + '.';
+    }
+
     return sentences.join('. ') + '.';
   }
   

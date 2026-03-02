@@ -182,7 +182,7 @@ body {
 
 .toolbar {
   display: flex;
-  align-items: flex-start;
+  align-items: flex-start; /* align top edges so New Passage lines up with option bars */
   justify-content: space-between;
   width: 97%;
   margin: 1rem auto 0.5rem;
@@ -193,6 +193,7 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 0.75rem;
+  margin-top: 0.15rem; /* nudge stats down so labels line up with MODE/LENGTH labels */
 }
 
 .timer-stat {
@@ -334,42 +335,50 @@ body {
 
 .typing-display {
   position: relative;
-  display: block;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
   width: 100%;
   min-height: 72vh;
   height: 72vh;
   margin: 0;
   padding: 0.75rem 1rem;
-  font-size: 1.25rem;
+  font-size: 1.9531rem; /* 25% larger again */
   font-family: inherit;
-  line-height: 1.8;
+  line-height: 1.8rem; /* fixed line-height for scroll math + scroll lock */
   background-color: var(--surface);
   border: 2px solid var(--border);
   border-radius: 8px;
   box-sizing: border-box;
   cursor: text;
-  overflow-y: hidden;
-  scrollbar-width: none;       /* Firefox */
-  -ms-overflow-style: none;    /* IE/Edge */
+  overflow: hidden;
 }
 
-.typing-display::-webkit-scrollbar {
-  display: none;               /* Chrome/Safari */
+.typing-scroll {
+  height: 100%;
+  width: 100%;
+  overflow-y: hidden; /* prevent manual scrolling; we scroll via JS only */
+  overflow-x: hidden;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-spacing: 0.25em; /* increase spacing between words */
+  scrollbar-width: none; /* Firefox */
 }
 
-.typing-display::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 4rem;
-  pointer-events: none;
-  background: linear-gradient(to bottom, rgba(0, 0, 0, 0), var(--surface));
+.typing-scroll::-webkit-scrollbar {
+  display: none; /* WebKit */
+}
+
+.typing-display.show-bottom-fade .typing-scroll {
+  /* Fade just the text/content at the bottom, keep full box visible */
+  mask-image: linear-gradient(to bottom, black 65%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 65%, transparent 100%);
 }
 
 .hidden-input {
   position: absolute;
+  top: 0;
+  left: 0;
   opacity: 0;
   pointer-events: none;
   width: 0;
