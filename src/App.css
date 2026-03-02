@@ -126,12 +126,13 @@ body {
   position: absolute;
   top: calc(100% + 0.5rem);
   right: 0;
-  min-width: 210px;
+  min-width: 300px;
+  max-width: 380px;
   background: var(--surface);
   border: 1.5px solid var(--border);
-  border-radius: 10px;
-  padding: 0.5rem;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  border-radius: 14px;
+  padding: 0.9rem 1rem 1rem;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
   z-index: 100;
 }
 
@@ -147,9 +148,10 @@ body {
 .settings-item {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  justify-content: space-between;
+  gap: 0.8rem;
   width: 100%;
-  padding: 0.5rem 0.6rem;
+  padding: 0.55rem 0.7rem;
   background: transparent;
   border: none;
   border-radius: 6px;
@@ -162,7 +164,22 @@ body {
 }
 
 .settings-item:hover {
-  background: var(--border);
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.settings-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.04);
+  font-size: 0.95rem;
+}
+
+.settings-item-text {
+  flex: 1;
 }
 
 .app-logo {
@@ -210,6 +227,7 @@ body {
   color: var(--primary);
   letter-spacing: 0.05em;
   line-height: 1;
+  margin-top: 0.1rem; /* nudge numbers down slightly */
 }
 
 .timer-label {
@@ -217,7 +235,7 @@ body {
   font-weight: 600;
   letter-spacing: 0.1em;
   color: var(--text-muted);
-  margin-top: 0.1rem;
+  margin-top: 0.3rem; /* move WORDS/WPM labels further down to align with other labels */
 }
 
 .timer-divider {
@@ -267,6 +285,36 @@ body {
   border-radius: 8px;
   overflow: hidden;
   min-height: 2.5rem;
+}
+
+.length-toggle {
+  display: flex;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  min-height: 2.2rem;
+}
+
+.length-toggle-btn {
+  flex: 1;
+  padding: 0.25rem 0.7rem;
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: background 0.12s, color 0.12s;
+}
+
+.length-toggle-btn.active {
+  background: var(--primary);
+  color: #fff;
+}
+
+.length-toggle-btn:not(.active):hover {
+  background: var(--border);
+  color: var(--text);
 }
 
 .length-btn {
@@ -345,7 +393,7 @@ body {
   padding: 0.75rem 1rem;
   font-size: 1.9531rem; /* 25% larger again */
   font-family: inherit;
-  line-height: 1.8rem; /* fixed line-height for scroll math + scroll lock */
+  line-height: 2.6rem; /* more vertical spacing between lines for readability + scroll math */
   background-color: var(--surface);
   border: 2px solid var(--border);
   border-radius: 8px;
@@ -359,18 +407,89 @@ body {
   width: 100%;
   overflow-y: hidden; /* prevent manual scrolling; we scroll via JS only */
   overflow-x: hidden;
+  line-height: 2.6rem; /* keep inner content line-height in sync with scroll math */
   word-wrap: break-word;
   overflow-wrap: break-word;
-  word-spacing: 0.25em; /* increase spacing between words */
+  word-spacing: 0.4em; /* increased spacing between words */
   scrollbar-width: none; /* Firefox */
+}
+
+/* Slightly smaller buttons for picking word-count lengths (xs / short / medium / etc) */
+.length-selector-words .length-btn {
+  padding: 0.2rem 0.4rem;
+  min-height: 2.1rem;
+  font-size: 0.8rem;
+}
+
+/* Bar-style controls for time/word lengths when enabled in settings */
+.length-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  padding: 0.15rem 0.4rem;
+  background: transparent;
+}
+
+.length-bar-btn {
+  padding: 0.2rem 0.35rem;
+  min-height: 2rem;
+  min-width: 2.2rem;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.length-bar-btn:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.length-bar-value {
+  padding: 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  min-width: 5.5rem;
+  text-align: center;
+}
+
+.length-bar-value.small {
+  min-width: 4.5rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.settings-max-word-length {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.settings-max-word-length .length-bar-btn {
+  min-width: 1.8rem;
+  min-height: 1.8rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.settings-max-word-length .length-bar-btn:hover {
+  background: var(--border);
 }
 
 .typing-scroll::-webkit-scrollbar {
   display: none; /* WebKit */
 }
 
-.typing-display.show-bottom-fade .typing-scroll {
-  /* Fade just the text/content at the bottom, keep full box visible */
+.typing-display .typing-scroll {
+  /* Always fade the bottom of the visible text content */
   mask-image: linear-gradient(to bottom, black 65%, transparent 100%);
   -webkit-mask-image: linear-gradient(to bottom, black 65%, transparent 100%);
 }

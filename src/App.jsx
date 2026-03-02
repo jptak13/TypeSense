@@ -40,7 +40,8 @@ function formatTime(seconds) {
 function App() {
   const [userInput, setUserInput]           = useState("");
   const [targetSentence, setTargetSentence] = useState(
-    () => generateParagraphExactWords(LENGTH_CONFIG.medium.words)
+    // Default words-mode passage: exact word count with a moderate max word length.
+    () => generateParagraphExactWords(LENGTH_CONFIG.medium.words, 12)
   );
   const [timeElapsed, setTimeElapsed]       = useState(0);
   const [hasStarted, setHasStarted]         = useState(false);
@@ -50,6 +51,9 @@ function App() {
   const [themeOverride, setThemeOverride]   = useState(null);
   const [showSettings, setShowSettings]     = useState(false);
   const [hasMoreBelow, setHasMoreBelow]     = useState(false);
+  const [useBarControls, setUseBarControls] = useState(false);
+  const [customWordCount, setCustomWordCount] = useState(100);
+  const [maxWordLength, setMaxWordLength]   = useState(12);
 
   const inputRef        = useRef(null);
   const timerRef        = useRef(null);
@@ -108,6 +112,13 @@ function App() {
     if (!container) return;
 
     const updateHasMoreBelow = () => {
+      // Avoid bottom-fade flicker when a new passage is loaded and typing
+      // hasn't started yet — in that case, always show a solid block.
+      if (!hasStarted && userInput.length === 0) {
+        setHasMoreBelow(false);
+        return;
+      }
+
       const remaining =
         container.scrollHeight - (container.scrollTop + container.clientHeight);
       setHasMoreBelow(remaining > 1);
@@ -129,8 +140,10 @@ function App() {
     // Cursor position in content coordinates (accounting for existing scroll)
     const offsetTop = (cursorRect.top - containerRect.top) + container.scrollTop;
 
-    const secondLineTop = lineHeight * 1; // lock target
-    const thirdLineTop  = lineHeight * 2;
+    const secondLineTop = lineHeight * 1; // lock target (visual second line)
+    // Start scrolling as soon as the cursor moves into the 3rd visual line,
+    // so we trigger a bit before a full extra line has accumulated.
+    const thirdLineTop  = lineHeight * 1.5;
 
     if (offsetTop >= thirdLineTop) {
       const desiredScrollTop = offsetTop - secondLineTop;
@@ -152,7 +165,7 @@ function App() {
     }, 1000);
   };
 
-  const resetPassage = ({ minChars, exactWords }) => {
+  const resetPassage = ({ minChars, exactWords, maxLetters }) => {
     clearInterval(timerRef.current);
     timerRef.current = null;
     setTimeElapsed(0);
@@ -163,10 +176,11 @@ function App() {
       scrollRef.current.scrollTop = 0;
     }
     setHasMoreBelow(false);
+    const effectiveMax = typeof maxLetters === 'number' ? maxLetters : maxWordLength;
     const text =
       typeof exactWords === 'number'
-        ? generateParagraphExactWords(exactWords)
-        : generateParagraph(minChars);
+        ? generateParagraphExactWords(exactWords, effectiveMax)
+        : generateParagraph(minChars, effectiveMax);
     setTargetSentence(text);
     inputRef.current.focus();
   };
@@ -191,7 +205,11 @@ function App() {
     if (newMode === 'time') {
       resetPassage({ minChars: TIME_MODE_CHARS });
     } else {
-      resetPassage({ exactWords: LENGTH_CONFIG[length].words });
+      if (useBarControls) {
+        resetPassage({ exactWords: customWordCount });
+      } else {
+        resetPassage({ exactWords: LENGTH_CONFIG[length].words });
+      }
     }
   };
 
@@ -210,8 +228,56 @@ function App() {
     if (testMode === 'time') {
       resetPassage({ minChars: TIME_MODE_CHARS });
     } else {
-      resetPassage({ exactWords: LENGTH_CONFIG[length].words });
+      resetPassage({
+        exactWords: useBarControls ? customWordCount : LENGTH_CONFIG[length].words,
+      });
     }
+  };
+
+  const updateWordCount = (delta) => {
+    setCustomWordCount((prev) => {
+      const next = Math.min(500, Math.max(10, prev + delta));
+      // If we're already at the min/max, ignore the click entirely so the
+      // passage (and displayed number) do not change.
+      if (next === prev) return prev;
+
+      if (testMode === 'words' && useBarControls) {
+        resetPassage({ exactWords: next });
+      }
+      return next;
+    });
+  };
+
+  const updateTimeLimit = (delta) => {
+    setTimeLimit((prev) => {
+      const next = Math.min(600, Math.max(5, prev + delta));
+      // If we're already at the min/max, ignore the click entirely so the
+      // passage and timer stay as-is.
+      if (next === prev) return prev;
+
+      if (testMode === 'time') {
+        // Regenerate a long passage for the new duration.
+        resetPassage({ minChars: TIME_MODE_CHARS });
+      }
+      return next;
+    });
+  };
+
+  const adjustMaxWordLength = (delta) => {
+    setMaxWordLength((prev) => {
+      // Max word length is clamped between 3 and 15 letters.
+      const next = Math.min(15, Math.max(3, prev + delta));
+      // Regenerate the current passage using the new cap so the effect is immediate.
+      if (testMode === 'words') {
+        resetPassage({
+          exactWords: useBarControls ? customWordCount : LENGTH_CONFIG[length].words,
+          maxLetters: next,
+        });
+      } else {
+        resetPassage({ minChars: TIME_MODE_CHARS, maxLetters: next });
+      }
+      return next;
+    });
   };
 
   const toggleTheme = () => {
@@ -232,10 +298,6 @@ function App() {
     ? formatTime(Math.max(0, timeLimit - timeElapsed))
     : formatTime(timeElapsed);
 
-  const wpm = timeElapsed > 0
-    ? Math.round((userInput.length / 5) / (timeElapsed / 60))
-    : 0;
-
   // Words progress (words mode): how many completed words vs total in passage.
   const totalWords = targetSentence.trim().split(/\s+/).filter(Boolean).length;
   const completedWords = (() => {
@@ -244,6 +306,58 @@ function App() {
     const count = spaceMatches ? spaceMatches.length : 0;
     return Math.min(count, totalWords);
   })();
+
+  /*
+    WHY — WPM update cadence:
+    - We only allow WPM to jump *up* when a full word is completed (space typed),
+      so mid-word keystrokes don't make the stat bounce around.
+    - Between word completions, WPM can drift downward as time elapses and the
+      same amount of committed text is spread over more seconds.
+    - We measure "committed" characters as everything up to the last space; any
+      partially-typed word is ignored until the space arrives.
+  */
+  const [wpm, setWpm] = useState(0);
+  const prevCompletedWordsRef = useRef(0);
+
+  useEffect(() => {
+    if (timeElapsed === 0) {
+      setWpm(0);
+      prevCompletedWordsRef.current = completedWords;
+      return;
+    }
+
+    const lastSpaceIndex = userInput.lastIndexOf(' ');
+    const committedChars = lastSpaceIndex >= 0 ? lastSpaceIndex + 1 : 0;
+
+    if (committedChars === 0) {
+      // No complete words yet: let WPM decay toward 0 as time passes.
+      const raw = 0;
+      setWpm((prev) => Math.min(prev, raw));
+      prevCompletedWordsRef.current = completedWords;
+      return;
+    }
+
+    const minutes = timeElapsed / 60;
+    const raw = minutes > 0
+      ? Math.round((committedChars / 5) / minutes)
+      : 0;
+
+    const prevCompleted = prevCompletedWordsRef.current;
+
+    setWpm((prev) => {
+      let next = prev;
+      if (completedWords > prevCompleted) {
+        // New word finished: allow WPM to jump up to the latest value.
+        next = raw;
+        prevCompletedWordsRef.current = completedWords;
+      } else {
+        // No new word: WPM may only stay the same or decrease.
+        next = Math.min(prev, raw);
+      }
+      if (!Number.isFinite(next) || next < 0) return 0;
+      return next;
+    });
+  }, [timeElapsed, userInput, completedWords]);
 
   return (
     <div className="app-container">
@@ -271,8 +385,72 @@ function App() {
             <div className="settings-panel">
               <p className="settings-label">Appearance</p>
               <button className="settings-item" onClick={toggleTheme}>
-                <span>{isDark ? '☀' : '☾'}</span>
-                <span>{isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}</span>
+                <span className="settings-item-icon">
+                  {isDark ? '☀' : '☾'}
+                </span>
+                <span className="settings-item-text">
+                  {isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+                </span>
+              </button>
+
+              <p className="settings-label">Length settings</p>
+              <button className="settings-item" type="button">
+                <span className="settings-item-text">Passage length</span>
+                <div className="length-toggle">
+                  <button
+                    type="button"
+                    className={`length-toggle-btn${!useBarControls ? ' active' : ''}`}
+                    onClick={() => {
+                      if (useBarControls) {
+                        // Switching from custom back to presets.
+                        if (testMode === 'words') {
+                          resetPassage({ exactWords: LENGTH_CONFIG[length].words });
+                        }
+                        setUseBarControls(false);
+                      }
+                    }}
+                  >
+                    Preset
+                  </button>
+                  <button
+                    type="button"
+                    className={`length-toggle-btn${useBarControls ? ' active' : ''}`}
+                    onClick={() => {
+                      if (!useBarControls) {
+                        // Switching from presets to custom bar controls.
+                        if (testMode === 'words') {
+                          resetPassage({ exactWords: customWordCount });
+                        }
+                        setUseBarControls(true);
+                      }
+                    }}
+                  >
+                    Custom
+                  </button>
+                </div>
+              </button>
+
+              <button className="settings-item">
+                <span>Max word length (letters)</span>
+                <span className="settings-max-word-length">
+                  <button
+                    type="button"
+                    className="length-bar-btn"
+                    onClick={() => adjustMaxWordLength(-1)}
+                  >
+                    −
+                  </button>
+                  <span className="length-bar-value small">
+                    {maxWordLength} letters
+                  </span>
+                  <button
+                    type="button"
+                    className="length-bar-btn"
+                    onClick={() => adjustMaxWordLength(1)}
+                  >
+                    +
+                  </button>
+                </span>
               </button>
             </div>
           )}
@@ -326,33 +504,107 @@ function App() {
             <div className="option-block">
               {testMode === 'words' ? (
                 <>
-                  <div className="length-selector">
-                    {Object.entries(LENGTH_CONFIG).map(([key, val]) => (
+                  {useBarControls ? (
+                    <div className="length-bar">
                       <button
-                        key={key}
-                        className={`length-btn${length === key ? ' active' : ''}`}
-                        onClick={() => handleLengthChange(key)}
+                        type="button"
+                        className="length-bar-btn"
+                        onClick={() => updateWordCount(-50)}
                       >
-                        <span className="length-label">{key.charAt(0).toUpperCase() + key.slice(1)}</span>
-                        <span className="length-words">~{val.words} words</span>
+                        −50
                       </button>
-                    ))}
-                  </div>
+                      <button
+                        type="button"
+                        className="length-bar-btn"
+                        onClick={() => updateWordCount(-10)}
+                      >
+                        −10
+                      </button>
+                      <span className="length-bar-value">
+                        {customWordCount} words
+                      </span>
+                      <button
+                        type="button"
+                        className="length-bar-btn"
+                        onClick={() => updateWordCount(10)}
+                      >
+                        +10
+                      </button>
+                      <button
+                        type="button"
+                        className="length-bar-btn"
+                        onClick={() => updateWordCount(50)}
+                      >
+                        +50
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="length-selector length-selector-words">
+                      {Object.entries(LENGTH_CONFIG).map(([key, val]) => (
+                        <button
+                          key={key}
+                          className={`length-btn${length === key ? ' active' : ''}`}
+                          onClick={() => handleLengthChange(key)}
+                        >
+                          <span className="length-label">
+                            {key.charAt(0).toUpperCase() + key.slice(1)}
+                          </span>
+                          <span className="length-words">~{val.words} words</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <span className="option-label">LENGTH</span>
                 </>
               ) : (
                 <>
-                  <div className="length-selector">
-                    {TIME_OPTIONS.map(({ seconds, label }) => (
+                  {useBarControls ? (
+                    <div className="length-bar">
                       <button
-                        key={seconds}
-                        className={`length-btn${timeLimit === seconds ? ' active' : ''}`}
-                        onClick={() => handleTimeLimitChange(seconds)}
+                        type="button"
+                        className="length-bar-btn"
+                        onClick={() => updateTimeLimit(-30)}
                       >
-                        <span className="length-label">{label}</span>
+                        −30s
                       </button>
-                    ))}
-                  </div>
+                      <button
+                        type="button"
+                        className="length-bar-btn"
+                        onClick={() => updateTimeLimit(-5)}
+                      >
+                        −5s
+                      </button>
+                      <span className="length-bar-value">
+                        {formatTime(timeLimit)}
+                      </span>
+                      <button
+                        type="button"
+                        className="length-bar-btn"
+                        onClick={() => updateTimeLimit(5)}
+                      >
+                        +5s
+                      </button>
+                      <button
+                        type="button"
+                        className="length-bar-btn"
+                        onClick={() => updateTimeLimit(30)}
+                      >
+                        +30s
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="length-selector">
+                      {TIME_OPTIONS.map(({ seconds, label }) => (
+                        <button
+                          key={seconds}
+                          className={`length-btn${timeLimit === seconds ? ' active' : ''}`}
+                          onClick={() => handleTimeLimitChange(seconds)}
+                        >
+                          <span className="length-label">{label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <span className="option-label">DURATION</span>
                 </>
               )}
