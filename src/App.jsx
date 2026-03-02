@@ -54,6 +54,10 @@ function App() {
   const [useBarControls, setUseBarControls] = useState(false);
   const [customWordCount, setCustomWordCount] = useState(100);
   const [maxWordLength, setMaxWordLength]   = useState(12);
+  const [passageMode, setPassageMode]       = useState('default'); // 'default' | 'create'
+  const [promptText, setPromptText]         = useState('');
+  const [isGenerating, setIsGenerating]     = useState(false);
+  const [hasGeneratedInCreateMode, setHasGeneratedInCreateMode] = useState(false);
 
   const inputRef        = useRef(null);
   const timerRef        = useRef(null);
@@ -165,27 +169,40 @@ function App() {
     }, 1000);
   };
 
-  const resetPassage = ({ minChars, exactWords, maxLetters }) => {
+  const applyNewPassage = (text) => {
+    if (typeof text !== 'string' || !text.trim()) return;
     clearInterval(timerRef.current);
     timerRef.current = null;
     setTimeElapsed(0);
     setHasStarted(false);
     setUserInput("");
-    // Reset scroll position and fade state so the new passage always starts at the top.
     if (scrollRef.current) {
       scrollRef.current.scrollTop = 0;
     }
     setHasMoreBelow(false);
+    setTargetSentence(text);
+    if (inputRef.current) {
+      inputRef.current.focus();
+    }
+  };
+
+  const resetPassage = ({ minChars, exactWords, maxLetters }) => {
     const effectiveMax = typeof maxLetters === 'number' ? maxLetters : maxWordLength;
     const text =
       typeof exactWords === 'number'
         ? generateParagraphExactWords(exactWords, effectiveMax)
         : generateParagraph(minChars, effectiveMax);
-    setTargetSentence(text);
-    inputRef.current.focus();
+    applyNewPassage(text);
   };
 
   const handleTyping = (event) => {
+    // In create mode *before* a passage has been generated, reuse the main
+    // textbox as the prompt input with no length restriction.
+    if (passageMode === 'create' && !hasGeneratedInCreateMode) {
+      setPromptText(event.target.value);
+      return;
+    }
+
     // Block input when time mode is finished
     if (testMode === 'time' && hasStarted && timeElapsed >= timeLimit) return;
 
@@ -202,26 +219,43 @@ function App() {
 
   const handleModeChange = (newMode) => {
     setTestMode(newMode);
+    // Changing between words/time should reset the create-mode generation cycle.
+    setHasGeneratedInCreateMode(false);
+
     if (newMode === 'time') {
-      resetPassage({ minChars: TIME_MODE_CHARS });
+      if (passageMode === 'default') {
+        resetPassage({ minChars: TIME_MODE_CHARS });
+      }
     } else {
-      if (useBarControls) {
-        resetPassage({ exactWords: customWordCount });
-      } else {
-        resetPassage({ exactWords: LENGTH_CONFIG[length].words });
+      if (passageMode === 'default') {
+        if (useBarControls) {
+          resetPassage({ exactWords: customWordCount });
+        } else {
+          resetPassage({ exactWords: LENGTH_CONFIG[length].words });
+        }
       }
     }
   };
 
   const handleLengthChange = (newLength) => {
     setLength(newLength);
+    // Switching length resets the create-mode cycle.
+    setHasGeneratedInCreateMode(false);
+
     // Length only applies in words mode; regenerate to hit exact word count.
-    resetPassage({ exactWords: LENGTH_CONFIG[newLength].words });
+    if (passageMode === 'default') {
+      resetPassage({ exactWords: LENGTH_CONFIG[newLength].words });
+    }
   };
 
   const handleTimeLimitChange = (newLimit) => {
     setTimeLimit(newLimit);
-    resetPassage({ minChars: TIME_MODE_CHARS });
+    // Switching duration resets the create-mode cycle.
+    setHasGeneratedInCreateMode(false);
+
+    if (passageMode === 'default') {
+      resetPassage({ minChars: TIME_MODE_CHARS });
+    }
   };
 
   const handleNewPassage = () => {
@@ -231,6 +265,55 @@ function App() {
       resetPassage({
         exactWords: useBarControls ? customWordCount : LENGTH_CONFIG[length].words,
       });
+    }
+  };
+
+  const generateFromPrompt = async () => {
+    if (passageMode !== 'create') return;
+    const trimmedPrompt = promptText.trim();
+    if (!trimmedPrompt) return;
+
+    const desiredWords =
+      testMode === 'words'
+        ? (useBarControls ? customWordCount : LENGTH_CONFIG[length].words)
+        : LENGTH_CONFIG[length].words;
+
+    try {
+      setIsGenerating(true);
+      const response = await fetch('http://localhost:3000/api/generate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          prompt: trimmedPrompt,
+          wordCount: desiredWords,
+        }),
+      });
+
+      if (!response.ok) {
+        console.error('Failed to generate passage', await response.text());
+        return;
+      }
+
+      const data = await response.json();
+      if (data && typeof data.text === 'string') {
+        applyNewPassage(data.text);
+      }
+    } catch (err) {
+      console.error('Error calling /api/generate:', err);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleGenerateButtonClick = async () => {
+    if (passageMode !== 'create') return;
+    await generateFromPrompt();
+    // After the *first* successful generation in create mode,
+    // the button should flip to "New Passage" behavior.
+    if (!hasGeneratedInCreateMode) {
+      setHasGeneratedInCreateMode(true);
     }
   };
 
@@ -452,6 +535,38 @@ function App() {
                   </button>
                 </span>
               </button>
+
+              <p className="settings-label">Passage source</p>
+              <button className="settings-item" type="button">
+                <span className="settings-item-text">Mode</span>
+                <div className="length-toggle">
+                  <button
+                    type="button"
+                    className={`length-toggle-btn${passageMode === 'default' ? ' active' : ''}`}
+                    onClick={() => {
+                      setPassageMode('default');
+                      setHasGeneratedInCreateMode(false);
+                    }}
+                  >
+                    Default
+                  </button>
+                  <button
+                    type="button"
+                    className={`length-toggle-btn${passageMode === 'create' ? ' active' : ''}`}
+                    onClick={() => {
+                      setPassageMode('create');
+                      setHasGeneratedInCreateMode(false);
+                      // Seed the prompt with whatever the user last typed,
+                      // so switching back and forth doesn't lose intent.
+                      if (!promptText && userInput) {
+                        setPromptText(userInput);
+                      }
+                    }}
+                  >
+                    Create
+                  </button>
+                </div>
+              </button>
             </div>
           )}
         </div>
@@ -540,18 +655,26 @@ function App() {
                     </div>
                   ) : (
                     <div className="length-selector length-selector-words">
-                      {Object.entries(LENGTH_CONFIG).map(([key, val]) => (
-                        <button
-                          key={key}
-                          className={`length-btn${length === key ? ' active' : ''}`}
-                          onClick={() => handleLengthChange(key)}
-                        >
-                          <span className="length-label">
-                            {key.charAt(0).toUpperCase() + key.slice(1)}
-                          </span>
-                          <span className="length-words">~{val.words} words</span>
-                        </button>
-                      ))}
+                      {Object.entries(LENGTH_CONFIG).map(([key, val]) => {
+                        const label =
+                          key === 'xs'
+                            ? 'XS'
+                            : key === 'xl'
+                              ? 'XL'
+                              : key.charAt(0).toUpperCase() + key.slice(1);
+                        return (
+                          <button
+                            key={key}
+                            className={`length-btn${length === key ? ' active' : ''}`}
+                            onClick={() => handleLengthChange(key)}
+                          >
+                            <span className="length-label">
+                              {label}
+                            </span>
+                            <span className="length-words">~{val.words} words</span>
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                   <span className="option-label">LENGTH</span>
@@ -611,50 +734,75 @@ function App() {
             </div>
           </div>
         </div>
-
-        <button className="new-passage-btn" onClick={handleNewPassage}>
-          New Passage ↺
-        </button>
+        {passageMode === 'create' && (
+          <button
+            className="new-passage-btn"
+            onClick={hasGeneratedInCreateMode ? generateFromPrompt : handleGenerateButtonClick}
+            disabled={isGenerating}
+          >
+            {isGenerating
+              ? 'Generating...'
+              : hasGeneratedInCreateMode
+                ? 'New Passage ↺'
+                : 'Generate'}
+          </button>
+        )}
+        {passageMode === 'default' && (
+          <button className="new-passage-btn" onClick={handleNewPassage}>
+            New Passage ↺
+          </button>
+        )}
       </div>
-
       <div className="typing-area-wrapper">
-        <div
-          className={
-            `typing-display${isTimeDone ? ' test-done' : ''}${
-              hasMoreBelow ? ' show-bottom-fade' : ''
-            }`
-          }
-          onClick={() => inputRef.current.focus()}
-        >
-          <input
-            ref={inputRef}
-            className="hidden-input"
-            value={userInput}
-            onChange={handleTyping}
-          />
-          <div className="typing-scroll" ref={scrollRef}>
-            {targetSentence.split('').map((char, index) => {
-              let className = 'char-untyped';
-              if (index < userInput.length) {
-                className = userInput[index] === char ? 'char-correct' : 'char-wrong';
-              } else if (index === userInput.length && !isTimeDone) {
-                className = 'char-cursor';
-              }
-
-              const isCursor = className === 'char-cursor';
-
-              return (
-                <span
-                  key={index}
-                  className={className}
-                  ref={isCursor ? cursorRef : null}
-                >
-                  {char}
-                </span>
-              );
-            })}
+        {passageMode === 'create' && !hasGeneratedInCreateMode ? (
+          <div className="typing-display prompt-mode">
+            <textarea
+              className="prompt-input"
+              rows={2}
+              placeholder="Type your prompt here, e.g. 'a story about a snail on Mars'."
+              value={promptText}
+              onChange={(e) => setPromptText(e.target.value)}
+            />
           </div>
-        </div>
+        ) : (
+          <div
+            className={
+              `typing-display${isTimeDone ? ' test-done' : ''}${
+                hasMoreBelow ? ' show-bottom-fade' : ''
+              }`
+            }
+            onClick={() => inputRef.current.focus()}
+          >
+            <input
+              ref={inputRef}
+              className="hidden-input"
+              value={userInput}
+              onChange={handleTyping}
+            />
+            <div className="typing-scroll" ref={scrollRef}>
+              {targetSentence.split('').map((char, index) => {
+                let className = 'char-untyped';
+                if (index < userInput.length) {
+                  className = userInput[index] === char ? 'char-correct' : 'char-wrong';
+                } else if (index === userInput.length && !isTimeDone) {
+                  className = 'char-cursor';
+                }
+
+                const isCursor = className === 'char-cursor';
+
+                return (
+                  <span
+                    key={index}
+                    className={className}
+                    ref={isCursor ? cursorRef : null}
+                  >
+                    {char}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {isWordsDone && <p className="success-message">Passage complete!</p>}
