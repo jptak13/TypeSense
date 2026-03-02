@@ -1,0 +1,415 @@
+/*
+  WHY — CSS custom properties for theming:
+  All colors are defined as variables in :root (the light theme defaults).
+  The dark theme block simply re-declares those same variable names with new values.
+  Every rule in the file uses var(--name), so the entire color scheme flips
+  automatically with zero JavaScript.
+*/
+
+:root {
+  --bg:               #f0f2f5;
+  --surface:          #ffffff;
+  --text:             #222222;
+  --text-muted:       #bbbbbb;
+  --primary:          #1a73e8;
+  --primary-hover-bg: #1a73e8;
+  --primary-hover-fg: #ffffff;
+  --border:           #cccccc;
+  --char-correct:     #222222;
+  --char-untyped:     #bbbbbb;
+  --char-wrong-text:  #e53935;
+  --char-wrong-bg:    #fce4e4;
+  --success:          #2e7d32;
+}
+
+/* Applied when the OS is in dark mode and no manual override is set */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:               #1a1a1a;
+    --surface:          #23282f;
+    --text:             #e0e0e0;
+    --text-muted:       #5a5a5a;
+    --primary:          #60a5fa;
+    --primary-hover-bg: #60a5fa;
+    --primary-hover-fg: #1a1a1a;
+    --border:           #3a3a3a;
+    --char-correct:     #e0e0e0;
+    --char-untyped:     #5a5a5a;
+    --char-wrong-text:  #fca5a5;
+    --char-wrong-bg:    #3b1212;
+    --success:          #86efac;
+  }
+}
+
+/* Manual overrides — higher specificity than :root inside @media */
+html[data-theme="dark"] {
+  --bg:               #1a1a1a;
+  --surface:          #23282f;
+  --text:             #e0e0e0;
+  --text-muted:       #5a5a5a;
+  --primary:          #60a5fa;
+  --primary-hover-bg: #60a5fa;
+  --primary-hover-fg: #1a1a1a;
+  --border:           #3a3a3a;
+  --char-correct:     #e0e0e0;
+  --char-untyped:     #5a5a5a;
+  --char-wrong-text:  #fca5a5;
+  --char-wrong-bg:    #3b1212;
+  --success:          #86efac;
+}
+
+html[data-theme="light"] {
+  --bg:               #f0f2f5;
+  --surface:          #ffffff;
+  --text:             #222222;
+  --text-muted:       #bbbbbb;
+  --primary:          #1a73e8;
+  --primary-hover-bg: #1a73e8;
+  --primary-hover-fg: #ffffff;
+  --border:           #cccccc;
+  --char-correct:     #222222;
+  --char-untyped:     #bbbbbb;
+  --char-wrong-text:  #e53935;
+  --char-wrong-bg:    #fce4e4;
+  --success:          #2e7d32;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  margin: 0;
+}
+
+.app-container {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 1rem 2rem;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.settings-container {
+  position: relative;
+  margin-left: auto;
+}
+
+.settings-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: color 0.15s, background 0.15s;
+}
+
+.settings-btn svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.settings-btn:hover {
+  color: var(--primary);
+  background: var(--border);
+}
+
+.settings-panel {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  min-width: 210px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 0.5rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  z-index: 100;
+}
+
+.settings-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0.3rem 0.5rem 0.4rem;
+}
+
+.settings-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 0.875rem;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s;
+}
+
+.settings-item:hover {
+  background: var(--border);
+}
+
+.app-logo {
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
+  color: var(--primary);
+}
+
+.app-title {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--primary);
+  margin: 0;
+  letter-spacing: 0.04em;
+}
+
+.toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  width: 97%;
+  margin: 1rem auto 0.5rem;
+  min-height: 4.25rem;
+}
+
+.timer-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.timer-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.timer-value {
+  font-size: 1.85rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--primary);
+  letter-spacing: 0.05em;
+  line-height: 1;
+}
+
+.timer-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  margin-top: 0.1rem;
+}
+
+.timer-divider {
+  width: 2px;
+  height: 3.25rem;
+  background: var(--border);
+  border-radius: 1px;
+  flex-shrink: 0;
+}
+
+.test-options {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.option-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.test-options-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  min-width: 18rem;
+  min-height: 4rem;
+}
+
+.option-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+}
+
+.mode-selector .length-btn {
+  min-width: 2.8rem;
+}
+
+.length-selector {
+  display: flex;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  min-height: 2.5rem;
+}
+
+.length-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0.3rem 0.5rem;
+  min-height: 2.5rem;
+  background: transparent;
+  border: none;
+  border-right: 1.5px solid var(--border);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  color: var(--text-muted);
+}
+
+.length-btn:last-child {
+  border-right: none;
+}
+
+.length-btn.active {
+  background: var(--primary);
+  color: #fff;
+}
+
+.length-btn:not(.active):hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.length-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.length-words {
+  font-size: 0.7rem;
+  opacity: 0.75;
+}
+
+.new-passage-btn {
+  padding: 0.5rem 0.85rem;
+  font-size: 0.9rem;
+  min-height: 2.5rem;
+  font-family: inherit;
+  color: var(--primary);
+  background: transparent;
+  border: 1.5px solid var(--primary);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.new-passage-btn:hover {
+  background: var(--primary-hover-bg);
+  color: var(--primary-hover-fg);
+}
+
+.typing-area-wrapper {
+  width: 97%;
+  margin: 0 auto;
+  min-height: 72vh;
+}
+
+.typing-display {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 72vh;
+  height: 72vh;
+  margin: 0;
+  padding: 0.75rem 1rem;
+  font-size: 1.25rem;
+  font-family: inherit;
+  line-height: 1.8;
+  background-color: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  box-sizing: border-box;
+  cursor: text;
+  overflow-y: hidden;
+  scrollbar-width: none;       /* Firefox */
+  -ms-overflow-style: none;    /* IE/Edge */
+}
+
+.typing-display::-webkit-scrollbar {
+  display: none;               /* Chrome/Safari */
+}
+
+.typing-display::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4rem;
+  pointer-events: none;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0), var(--surface));
+}
+
+.hidden-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 0;
+  height: 0;
+}
+
+.char-untyped {
+  color: var(--char-untyped);
+}
+
+.char-correct {
+  color: var(--char-correct);
+}
+
+.char-wrong {
+  color: var(--char-wrong-text);
+  background-color: var(--char-wrong-bg);
+  border-radius: 2px;
+}
+
+.char-cursor {
+  color: var(--char-untyped);
+  border-left: 2px solid var(--primary);
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  50% { border-left-color: transparent; }
+}
+
+.typing-display.test-done {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.success-message {
+  text-align: center;
+  margin-top: 1rem;
+  font-size: 1.25rem;
+  font-weight: bold;
+  color: var(--success);
+}
+

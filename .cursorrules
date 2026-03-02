@@ -1,0 +1,12 @@
+# Project: TypeSense
+A smart typing web application that tracks user keystrokes to identify and actively target weak letter groupings (n-grams) and missed words.
+
+# Tech Stack
+- Frontend: React (Vite)
+- State Management: React Hooks (useState, useEffect)
+- Styling: Standard CSS
+
+# AI Assistant Directives (CRITICAL)
+1. **Explain the "Why":** The user is learning. When generating code, always explain the underlying computer science concepts, React hooks, or logic flows being used.
+2. **Vibe Coding Partner:** Provide the heavy lifting for boilerplate, but clearly separate the code from the conceptual explanation so the user can guide the architecture.
+3. **Modern React:** Write clean, modern React code using functional components.
