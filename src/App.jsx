@@ -75,8 +75,33 @@ function App() {
     visible: false,
   });
   const [virtualScrollOffset, setVirtualScrollOffset] = useState(0); // For short passages that don't overflow
+  const [isForceDone, setIsForceDone] = useState(false); // Auto-stop after idle
+  // Authentication state: null = guest. Persisted via localStorage.
+  const [currentUser, setCurrentUser] = useState(null);
+  const [showAuthForm, setShowAuthForm] = useState(false);
+  const [authMode, setAuthMode] = useState('login'); // 'login' | 'signup'
+  const [authName, setAuthName] = useState('');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
 
   useEffect(() => { inputRef.current.focus(); }, []);
+
+  // On first load, restore any previously-signed-in user from localStorage.
+  useEffect(() => {
+    try {
+      const storedUser = localStorage.getItem('typesense_user');
+      if (storedUser) {
+        const parsed = JSON.parse(storedUser);
+        if (parsed && typeof parsed === 'object') {
+          setCurrentUser(parsed);
+        }
+      }
+    } catch {
+      // Ignore corrupted localStorage; treat as logged-out.
+    }
+  }, []);
 
   useEffect(() => {
     if (themeOverride) {
@@ -95,6 +120,17 @@ function App() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // When the settings panel is closed, clear the auth form so it’s fresh next time
+  useEffect(() => {
+    if (!showSettings) {
+      setAuthName('');
+      setAuthEmail('');
+      setAuthPassword('');
+      setAuthError('');
+      setShowAuthForm(false);
+    }
+  }, [showSettings]);
 
   // Words mode: stop when passage is finished
   useEffect(() => {
@@ -207,9 +243,11 @@ function App() {
   const startTimer = () => {
     if (timerRef.current) return;
     timerRef.current = setInterval(() => {
-      if (Date.now() - lastTypeTimeRef.current > 5000) {
+      if (Date.now() - lastTypeTimeRef.current > 1500) {
         clearInterval(timerRef.current);
         timerRef.current = null;
+        // Auto-stop the test after 5 seconds of inactivity.
+        setIsForceDone(true);
         return;
       }
       setTimeElapsed((prev) => prev + 1);
@@ -225,6 +263,7 @@ function App() {
     prevCompletedWordsRef.current = 0;
     startTimeRef.current = null;
     lockedMinLenRef.current = 0;
+    setIsForceDone(false);
     setVirtualScrollOffset(0);
     setHasStarted(false);
     setUserInput("");
@@ -266,6 +305,12 @@ function App() {
       ? event.target.selectionEnd
       : null;
     const isWordsMode = testMode === 'words';
+
+    // When a test has been force-stopped due to inactivity, block further typing.
+    if (isForceDone) {
+      event.target.value = userInput;
+      return;
+    }
 
     // Guard: never allow a leading space at the very start of the passage.
     // If the first key pressed is space, ignore it so we don't "hide" the
@@ -385,7 +430,7 @@ function App() {
 
     try {
       setIsGenerating(true);
-      const response = await fetch('http://localhost:3000/api/generate', {
+      const response = await fetch('/api/generate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -471,6 +516,118 @@ function App() {
     });
   };
 
+  const handleAuthSuccess = (data) => {
+    if (!data || !data.user || !data.token) return;
+    const { user, token } = data;
+    setCurrentUser(user);
+    setShowAuthForm(false);
+    setAuthError('');
+    setAuthPassword('');
+    try {
+      localStorage.setItem('typesense_user', JSON.stringify(user));
+      localStorage.setItem('typesense_jwt', token);
+    } catch {
+      // If storage fails (e.g. quota), we still keep the in-memory session.
+    }
+  };
+
+  const handleLogin = async (event) => {
+    event.preventDefault();
+    setAuthLoading(true);
+    setAuthError('');
+    try {
+      const response = await fetch('/api/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: authEmail.trim(),
+          password: authPassword,
+        }),
+      });
+
+      const text = await response.text();
+      let data = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {}
+
+      if (!response.ok) {
+        setAuthError(data?.error || (response.status === 401
+          ? 'Invalid email or password.'
+          : `Sign in failed (${response.status}). Please try again.`));
+        return;
+      }
+
+      handleAuthSuccess(data);
+    } catch (err) {
+      console.error('Error in /api/login:', err);
+      setAuthError('Network error. Is the backend server running?');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSignup = async (event) => {
+    event.preventDefault();
+    setAuthLoading(true);
+    setAuthError('');
+    try {
+      const response = await fetch('/api/signup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: authName.trim(),
+          email: authEmail.trim(),
+          password: authPassword,
+        }),
+      });
+
+      const text = await response.text();
+      let data = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        // Server returned non-JSON (e.g. HTML error page)
+      }
+
+      if (!response.ok) {
+        const message = data?.error || (response.status === 409
+          ? 'An account with this email already exists.'
+          : response.status === 400
+            ? 'Name, email, and password are required.'
+            : `Sign up failed (${response.status}). Please try again.`);
+        setAuthError(message);
+        return;
+      }
+
+      handleAuthSuccess(data);
+    } catch (err) {
+      console.error('Error in /api/signup:', err);
+      setAuthError('Network error. Is the backend server running?');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setShowAuthForm(false);
+    setAuthName('');
+    setAuthEmail('');
+    setAuthPassword('');
+    setAuthError('');
+    try {
+      localStorage.removeItem('typesense_user');
+      localStorage.removeItem('typesense_jwt');
+    } catch {
+      // Ignore storage errors; state is already cleared.
+    }
+  };
+
   const toggleTheme = () => {
     setThemeOverride((prev) => {
       if (prev) return prev === 'dark' ? 'light' : 'dark';
@@ -483,6 +640,7 @@ function App() {
 
   const isTimeDone = testMode === 'time' && hasStarted && timeElapsed >= timeLimit;
   const isWordsDone = testMode === 'words' && hasStarted && userInput.length >= targetSentence.length;
+  const isStopped = isTimeDone || isWordsDone || isForceDone;
 
   // Words mode counts up; time mode counts down
   const displayTime = testMode === 'time'
@@ -552,7 +710,7 @@ function App() {
   const NORMAL_WPM_TICK_MS = 750;
   const [wpmTick, setWpmTick] = useState(0);
   useEffect(() => {
-    if (!hasStarted || isWordsDone || isTimeDone) {
+    if (!hasStarted || isStopped) {
       if (wpmIntervalRef.current) {
         clearInterval(wpmIntervalRef.current);
         wpmIntervalRef.current = null;
@@ -572,7 +730,7 @@ function App() {
       if (wpmIntervalRef.current) clearInterval(wpmIntervalRef.current);
       wpmIntervalRef.current = null;
     };
-  }, [hasStarted, isWordsDone, isTimeDone, completedWords]);
+  }, [hasStarted, isStopped, completedWords]);
 
   useEffect(() => {
     if (!hasStarted) {
@@ -642,6 +800,106 @@ function App() {
           </button>
           {showSettings && (
             <div className="settings-panel">
+              <p className="settings-label">Authentication</p>
+              <div className="auth-section">
+                <div className="auth-header-row">
+                  <span className="auth-identity">
+                    {currentUser ? (currentUser.name || currentUser.email) : 'Guest'}
+                  </span>
+                  {currentUser ? (
+                    <button
+                      type="button"
+                      className="auth-primary-btn auth-signout-btn"
+                      onClick={handleLogout}
+                    >
+                      Sign Out
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="auth-primary-btn"
+                      onClick={() => {
+                        setShowAuthForm((prev) => !prev);
+                        setAuthError('');
+                      }}
+                    >
+                      Sign In
+                    </button>
+                  )}
+                </div>
+
+                {!currentUser && showAuthForm && (
+                  <form
+                    className="auth-form"
+                    onSubmit={authMode === 'login' ? handleLogin : handleSignup}
+                  >
+                    {authMode === 'signup' && (
+                      <div className="auth-field">
+                        <label htmlFor="auth-name">Name</label>
+                        <input
+                          id="auth-name"
+                          type="text"
+                          className="auth-input"
+                          value={authName}
+                          onChange={(e) => setAuthName(e.target.value)}
+                          autoComplete="name"
+                        />
+                      </div>
+                    )}
+                    <div className="auth-field">
+                      <label htmlFor="auth-email">Email</label>
+                      <input
+                        id="auth-email"
+                        type="email"
+                        className="auth-input"
+                        value={authEmail}
+                        onChange={(e) => setAuthEmail(e.target.value)}
+                        autoComplete="email"
+                      />
+                    </div>
+                    <div className="auth-field">
+                      <label htmlFor="auth-password">Password</label>
+                      <input
+                        id="auth-password"
+                        type="password"
+                        className="auth-input"
+                        value={authPassword}
+                        onChange={(e) => setAuthPassword(e.target.value)}
+                        autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
+                      />
+                    </div>
+                    {authError && <div className="auth-error">{authError}</div>}
+                    <div className="auth-actions">
+                      <button
+                        type="submit"
+                        className="auth-primary-btn"
+                        disabled={authLoading}
+                      >
+                        {authLoading
+                          ? authMode === 'login'
+                            ? 'Signing in...'
+                            : 'Signing up...'
+                          : authMode === 'login'
+                            ? 'Sign In'
+                            : 'Sign Up'}
+                      </button>
+                      <button
+                        type="button"
+                        className="auth-secondary-btn"
+                        onClick={() => {
+                          setAuthMode((mode) => (mode === 'login' ? 'signup' : 'login'));
+                          setAuthError('');
+                        }}
+                      >
+                        {authMode === 'login'
+                          ? 'Need an account? Sign Up'
+                          : 'Have an account? Sign In'}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+
               <p className="settings-label">Appearance</p>
               <button className="settings-item" onClick={toggleTheme}>
                 <span className="settings-item-icon">
@@ -985,10 +1243,15 @@ function App() {
                   return Array.from({ length: maxLen }).map((_, index) => {
                     const targetChar = targetChars[index] ?? ' ';
                     let className = 'char-untyped';
-                    if (index < userInput.length) {
+                  if (index < userInput.length && !isForceDone) {
                       className =
                         userInput[index] === targetChar ? 'char-correct' : 'char-wrong';
-                    } else if (index === userInput.length && !isTimeDone && !isWordsDone) {
+                  } else if (
+                    index === userInput.length &&
+                    !isTimeDone &&
+                    !isWordsDone &&
+                    !isForceDone
+                  ) {
                       className = 'char-cursor';
                     }
 
@@ -1030,6 +1293,11 @@ function App() {
         </p>
       )}
       {isTimeDone  && <p className="success-message">Time's up! — {wpm} WPM</p>}
+      {isForceDone && !isWordsDone && !isTimeDone && (
+        <p className="success-message">
+          Stopped — {completedWords} / {totalWords} words, {wpm} WPM
+        </p>
+      )}
     </div>
   );
 }
