@@ -139,7 +139,7 @@ body {
 .settings-label {
   font-size: 0.7rem;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.02em;
   text-transform: uppercase;
   color: var(--text-muted);
   margin: 0.3rem 0.5rem 0.4rem;
@@ -524,9 +524,10 @@ body {
   overflow-y: hidden; /* prevent manual scrolling; we scroll via JS only */
   overflow-x: hidden;
   line-height: 2.6rem; /* keep inner content line-height in sync with scroll math */
+  letter-spacing: 3.1px; /* slightly more space between letters */
   word-wrap: break-word;
   overflow-wrap: break-word;
-  word-spacing: 0.4em; /* increased spacing between words */
+  word-spacing: 0.1em; /* increased spacing between words */
   scrollbar-width: none; /* Firefox */
 }
 
@@ -652,12 +653,19 @@ body {
 
 .char-cursor {
   color: var(--char-untyped);
-  border-left: 2px solid var(--primary);
-  animation: blink 1s step-end infinite;
 }
 
-@keyframes blink {
-  50% { border-left-color: transparent; }
+.typing-scroll {
+  position: relative;
+}
+
+.typing-cursor {
+  position: absolute;
+  width: 3px;
+  background: var(--primary);
+  border-radius: 2px;
+  /* Smooth slide as the cursor moves between characters */
+  transition: transform 80ms ease-out;
 }
 
 .typing-display.test-done {

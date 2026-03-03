@@ -66,6 +66,15 @@ function App() {
   const lastTypeTimeRef = useRef(0);
   const scrollRef       = useRef(null);
   const cursorRef       = useRef(null);
+  const startTimeRef    = useRef(null); // When the user first typed (for real elapsed time)
+  const lockedMinLenRef = useRef(0); // Prevent backspacing past last completed-word space
+  const [cursorOverlay, setCursorOverlay] = useState({
+    top: 0,
+    left: 0,
+    height: 0,
+    visible: false,
+  });
+  const [virtualScrollOffset, setVirtualScrollOffset] = useState(0); // For short passages that don't overflow
 
   useEffect(() => { inputRef.current.focus(); }, []);
 
@@ -89,7 +98,9 @@ function App() {
 
   // Words mode: stop when passage is finished
   useEffect(() => {
-    if (testMode === 'words' && userInput === targetSentence && hasStarted) {
+    // In words mode, stop once the user has typed the full passage length
+    // (regardless of correctness).
+    if (testMode === 'words' && hasStarted && userInput.length >= targetSentence.length) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
@@ -116,6 +127,9 @@ function App() {
 
     if (!container) return;
 
+    const canScroll =
+      container.scrollHeight - container.clientHeight > 1;
+
     const updateHasMoreBelow = () => {
       // Avoid bottom-fade flicker when a new passage is loaded and typing
       // hasn't started yet — in that case, always show a solid block.
@@ -124,13 +138,19 @@ function App() {
         return;
       }
 
-      const remaining =
-        container.scrollHeight - (container.scrollTop + container.clientHeight);
-      setHasMoreBelow(remaining > 1);
+      if (canScroll) {
+        const remaining =
+          container.scrollHeight - (container.scrollTop + container.clientHeight);
+        setHasMoreBelow(remaining > 1);
+      } else {
+        // If the entire passage fits in the viewport, don't show the bottom fade.
+        setHasMoreBelow(false);
+      }
     };
 
     // When there's no active cursor (e.g., test finished), just update fade state
     if (!cursor) {
+      setCursorOverlay((prev) => (prev.visible ? { ...prev, visible: false } : prev));
       updateHasMoreBelow();
       return;
     }
@@ -138,12 +158,27 @@ function App() {
     const style       = window.getComputedStyle(container);
     const lineHeight  = parseFloat(style.lineHeight);
     if (!lineHeight || Number.isNaN(lineHeight)) return;
+    const letterSpacing = parseFloat(style.letterSpacing);
+    const letterSpacingPx = Number.isFinite(letterSpacing) ? letterSpacing : 0;
+    const CURSOR_GLOBAL_X_OFFSET = 1.2; // small global left shift so cursor isn't hugging next letter
 
     const containerRect = container.getBoundingClientRect();
     const cursorRect    = cursor.getBoundingClientRect();
 
     // Cursor position in content coordinates (accounting for existing scroll)
     const offsetTop = (cursorRect.top - containerRect.top) + container.scrollTop;
+    const offsetLeft = (cursorRect.left - containerRect.left) + container.scrollLeft;
+    const cursorLeft = Math.max(
+      0,
+      offsetLeft - (letterSpacingPx / 2) - CURSOR_GLOBAL_X_OFFSET
+    );
+
+    setCursorOverlay({
+      top: offsetTop,
+      left: cursorLeft,
+      height: cursorRect.height || lineHeight,
+      visible: true,
+    });
 
     const secondLineTop = lineHeight * 1; // lock target (visual second line)
     // Start scrolling as soon as the cursor moves into the 3rd visual line,
@@ -152,11 +187,22 @@ function App() {
 
     if (offsetTop >= thirdLineTop) {
       const desiredScrollTop = offsetTop - secondLineTop;
-      container.scrollTop = desiredScrollTop;
+      if (canScroll) {
+        // Normal behavior: container can scroll; use native scrollTop.
+        container.scrollTop = desiredScrollTop;
+        if (virtualScrollOffset !== 0) {
+          setVirtualScrollOffset(0);
+        }
+      } else if (virtualScrollOffset === 0) {
+        // Short passage that doesn't overflow: "virtually" scroll by translating
+        // the inner content upward so the first line exits the viewport.
+        // Only set once to avoid oscillation.
+        setVirtualScrollOffset(desiredScrollTop);
+      }
     }
 
     updateHasMoreBelow();
-  }, [userInput, targetSentence, testMode, timeLimit, hasStarted]);
+  }, [userInput, targetSentence, testMode, timeLimit, hasStarted, virtualScrollOffset]);
 
   const startTimer = () => {
     if (timerRef.current) return;
@@ -175,6 +221,11 @@ function App() {
     clearInterval(timerRef.current);
     timerRef.current = null;
     setTimeElapsed(0);
+    setWpm(0);
+    prevCompletedWordsRef.current = 0;
+    startTimeRef.current = null;
+    lockedMinLenRef.current = 0;
+    setVirtualScrollOffset(0);
     setHasStarted(false);
     setUserInput("");
     if (scrollRef.current) {
@@ -208,10 +259,58 @@ function App() {
     if (testMode === 'time' && hasStarted && timeElapsed >= timeLimit) return;
 
     const value = event.target.value;
-    if (value.length <= targetSentence.length) {
+    const selStart = typeof event.target.selectionStart === 'number'
+      ? event.target.selectionStart
+      : null;
+    const selEnd = typeof event.target.selectionEnd === 'number'
+      ? event.target.selectionEnd
+      : null;
+    const isWordsMode = testMode === 'words';
+
+    // Guard: never allow a leading space at the very start of the passage.
+    // If the first key pressed is space, ignore it so we don't "hide" the
+    // first target character and make the first word impossible to complete.
+    if (userInput.length === 0 && value.length === 1 && value[0] === ' ') {
+      event.target.value = userInput;
+      return;
+    }
+
+    // Words mode: enforce "type-at-the-end only". If the user clicks back into
+    // an earlier word and types (e.g., space over existing letters), ignore
+    // the edit so it doesn't nuke characters or incorrectly "commit" words.
+    if (isWordsMode && selStart !== null && selEnd !== null) {
+      const caretAtEnd = selStart === value.length && selEnd === value.length;
+      const hasSelection = selStart !== selEnd;
+      // Only allow edits when caret is at the very end and there is
+      // no active selection. This prevents "select a bunch, press space"
+      // from nuking multiple words.
+      if (!caretAtEnd || hasSelection) {
+        event.target.value = userInput;
+        return;
+      }
+    }
+
+    if (isWordsMode || value.length <= targetSentence.length) {
+      // Word-lock (words mode): once you start a new word (type any char after a space),
+      // you can backspace within the current word but not past that space.
+      if (isWordsMode) {
+        const isDeleting = value.length < userInput.length;
+        if (isDeleting && value.length < lockedMinLenRef.current) {
+          return;
+        }
+
+        const lastSpaceIndex = value.lastIndexOf(' ');
+        if (lastSpaceIndex !== -1 && value.length > lastSpaceIndex + 1) {
+          lockedMinLenRef.current = Math.max(lockedMinLenRef.current, lastSpaceIndex + 1);
+        }
+      }
+
       lastTypeTimeRef.current = Date.now();
       if (value.length > 0) {
-        if (!hasStarted) setHasStarted(true);
+        if (!hasStarted) {
+          setHasStarted(true);
+          startTimeRef.current = Date.now();
+        }
         startTimer();
       }
       setUserInput(value);
@@ -383,7 +482,7 @@ function App() {
     (!themeOverride && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
   const isTimeDone = testMode === 'time' && hasStarted && timeElapsed >= timeLimit;
-  const isWordsDone = testMode === 'words' && userInput === targetSentence;
+  const isWordsDone = testMode === 'words' && hasStarted && userInput.length >= targetSentence.length;
 
   // Words mode counts up; time mode counts down
   const displayTime = testMode === 'time'
@@ -392,29 +491,47 @@ function App() {
 
   // Words progress (words mode): how many completed words vs total in passage.
   const totalWords = targetSentence.trim().split(/\s+/).filter(Boolean).length;
-  // Only count a word as "completed" when it was typed correctly (userInput matches
-  // targetSentence up to and including the space after that word). This prevents
-  // WPM from going up when you just hit space without typing the word correctly.
-  const completedWords = (() => {
-    if (!userInput) return 0;
-    let count = 0;
-    for (let i = 0; i < targetSentence.length && i < userInput.length; i++) {
-      if (userInput[i] !== targetSentence[i]) break;
-      if (targetSentence[i] === ' ') count++;
-    }
-    return Math.min(count, totalWords);
-  })();
 
-  // For WPM we only count "committed" characters up to the last correctly completed word.
-  const lastCorrectSpaceIndex = (() => {
-    let last = -1;
-    for (let i = 0; i < targetSentence.length && i < userInput.length; i++) {
-      if (userInput[i] !== targetSentence[i]) break;
-      if (targetSentence[i] === ' ') last = i;
+  // Sliding Window Look-Ahead: allow skipping words; grant WPM credit when a correct word
+  // appears later in the passage (look ahead up to 15 words from current position).
+  const targetWords = targetSentence.trim().split(/\s+/).filter(Boolean);
+  const userWords = userInput.split(/\s+/).filter(Boolean);
+  const hasTrailingSpace = userInput.length > 0 && userInput.trimEnd() !== userInput;
+  // Normally, we only "commit" a word after a trailing space so partially-typed
+  // words don't count. But once the test is done (typed full length), the last
+  // word should count even without a trailing space.
+  const committedUserWords = isWordsDone
+    ? userWords
+    : (hasTrailingSpace ? userWords : userWords.slice(0, -1));
+
+  let completedWords = 0;
+  let committedChars = 0;
+  let targetPointer = 0; // Tracks our actual position in the passage
+
+  for (let i = 0; i < committedUserWords.length; i++) {
+    const uWord = committedUserWords[i];
+
+    // Look ahead up to 15 words to see if the user skipped forward
+    let foundMatchIndex = -1;
+    const searchLimit = Math.min(targetPointer + 15, targetWords.length);
+    for (let j = targetPointer; j < searchLimit; j++) {
+      if (uWord === targetWords[j]) {
+        foundMatchIndex = j;
+        break;
+      }
     }
-    return last;
-  })();
-  const committedChars = lastCorrectSpaceIndex >= 0 ? lastCorrectSpaceIndex + 1 : 0;
+
+    // If the word is found anywhere ahead, grant credit and resync the pointer
+    if (foundMatchIndex !== -1) {
+      completedWords += 1;
+      committedChars += targetWords[foundMatchIndex].length + 1; // +1 for the space
+      targetPointer = foundMatchIndex + 1;
+    }
+  }
+  completedWords = Math.min(completedWords, targetWords.length);
+
+  // Note: words mode now ends by character count (not perfect correctness),
+  // so we don't special-case "exact match" here.
 
   /*
     WHY — WPM update cadence:
@@ -425,25 +542,63 @@ function App() {
   */
   const [wpm, setWpm] = useState(0);
   const prevCompletedWordsRef = useRef(0);
+  const wpmIntervalRef = useRef(null);
+
+  // Use real elapsed time from first keystroke so WPM updates immediately when a word
+  // is completed. We tick:
+  // - very fast for the first 3 completed words (so early WPM feels responsive)
+  // - then back to a normal cadence (so we don't waste renders all test long)
+  const FAST_WPM_TICK_MS = 750;
+  const NORMAL_WPM_TICK_MS = 750;
+  const [wpmTick, setWpmTick] = useState(0);
+  useEffect(() => {
+    if (!hasStarted || isWordsDone || isTimeDone) {
+      if (wpmIntervalRef.current) {
+        clearInterval(wpmIntervalRef.current);
+        wpmIntervalRef.current = null;
+      }
+      return;
+    }
+
+    const tickMs = completedWords < 3 ? FAST_WPM_TICK_MS : NORMAL_WPM_TICK_MS;
+
+    if (wpmIntervalRef.current) {
+      clearInterval(wpmIntervalRef.current);
+      wpmIntervalRef.current = null;
+    }
+
+    wpmIntervalRef.current = setInterval(() => setWpmTick((t) => t + 1), tickMs);
+    return () => {
+      if (wpmIntervalRef.current) clearInterval(wpmIntervalRef.current);
+      wpmIntervalRef.current = null;
+    };
+  }, [hasStarted, isWordsDone, isTimeDone, completedWords]);
 
   useEffect(() => {
-    if (timeElapsed === 0) {
+    if (!hasStarted) {
       setWpm(0);
-      prevCompletedWordsRef.current = completedWords;
       return;
     }
+    // Use real elapsed time from startTimeRef; don't wait for timeElapsed (1s tick) or WPM would lag for a full second at start.
 
-    if (committedChars === 0) {
+    const wpmChars = testMode === 'words'
+      ? Math.min(userInput.length, targetSentence.length)
+      : committedChars;
+
+    if (wpmChars === 0) {
       // No complete words yet: let WPM decay toward 0 as time passes.
-      const raw = 0;
-      setWpm((prev) => Math.min(prev, raw));
+      setWpm((prev) => Math.min(prev, 0));
       prevCompletedWordsRef.current = completedWords;
       return;
     }
 
-    const minutes = timeElapsed / 60;
+    // Real elapsed seconds since first keystroke (no 1-second lag)
+    const elapsedSeconds = startTimeRef.current != null
+      ? (Date.now() - startTimeRef.current) / 1000
+      : timeElapsed;
+    const minutes = elapsedSeconds / 60;
     const raw = minutes > 0
-      ? Math.round((committedChars / 5) / minutes)
+      ? Math.round((wpmChars / 5) / minutes)
       : 0;
 
     const prevCompleted = prevCompletedWordsRef.current;
@@ -461,7 +616,7 @@ function App() {
       if (!Number.isFinite(next) || next < 0) return 0;
       return next;
     });
-  }, [timeElapsed, userInput, completedWords, committedChars]);
+  }, [timeElapsed, userInput, completedWords, committedChars, hasStarted, wpmTick]);
 
   return (
     <div className="app-container">
@@ -807,32 +962,73 @@ function App() {
               onChange={handleTyping}
             />
             <div className="typing-scroll" ref={scrollRef}>
-              {targetSentence.split('').map((char, index) => {
-                let className = 'char-untyped';
-                if (index < userInput.length) {
-                  className = userInput[index] === char ? 'char-correct' : 'char-wrong';
-                } else if (index === userInput.length && !isTimeDone) {
-                  className = 'char-cursor';
+              {cursorOverlay.visible && (
+                <div
+                  className="typing-cursor"
+                  style={{
+                    transform: `translate(${cursorOverlay.left}px, ${cursorOverlay.top}px)`,
+                    height: cursorOverlay.height,
+                  }}
+                />
+              )}
+              <div
+                className="typing-scroll-inner"
+                style={
+                  virtualScrollOffset
+                    ? { transform: `translateY(-${virtualScrollOffset}px)` }
+                    : undefined
                 }
+              >
+                {(() => {
+                  const targetChars = targetSentence.split('');
+                  const maxLen = Math.max(targetChars.length, userInput.length);
+                  return Array.from({ length: maxLen }).map((_, index) => {
+                    const targetChar = targetChars[index] ?? ' ';
+                    let className = 'char-untyped';
+                    if (index < userInput.length) {
+                      className =
+                        userInput[index] === targetChar ? 'char-correct' : 'char-wrong';
+                    } else if (index === userInput.length && !isTimeDone && !isWordsDone) {
+                      className = 'char-cursor';
+                    }
 
-                const isCursor = className === 'char-cursor';
+                    const isCursor = className === 'char-cursor';
+                    const isWrong = className === 'char-wrong';
+                    let displayChar = targetChar;
+                    if (isWrong && index < userInput.length) {
+                      // If the target is a space and the user typed a visible char,
+                      // show the user's char (red) inside the gap.
+                      if (targetChar === ' ' && userInput[index] !== ' ') {
+                        displayChar = userInput[index];
+                      } else {
+                        // Otherwise, keep showing the passage character but mark it wrong
+                        // so letters never visually "disappear" when the user hits space.
+                        displayChar = targetChar;
+                      }
+                    }
 
-                return (
-                  <span
-                    key={index}
-                    className={className}
-                    ref={isCursor ? cursorRef : null}
-                  >
-                    {char}
-                  </span>
-                );
-              })}
+                    return (
+                      <span
+                        key={index}
+                        className={className}
+                        ref={isCursor ? cursorRef : null}
+                      >
+                        {displayChar}
+                      </span>
+                    );
+                  });
+                })()}
+              </div>
             </div>
           </div>
         )}
       </div>
 
-      {isWordsDone && <p className="success-message">Passage complete!</p>}
+      {isWordsDone && (
+        <p className="success-message">
+          Completed — {completedWords} / {totalWords} words, {wpm} WPM
+        </p>
+      )}
       {isTimeDone  && <p className="success-message">Time's up! — {wpm} WPM</p>}
     </div>
   );

@@ -201,7 +201,8 @@ const baseNouns = [
       sentences.push(s);
       total += s.length + 2;
     }
-    return sentences.join('. ') + '.';
+  // No trailing period at the very end of the passage (final sentence has no '.')
+  return sentences.join('. ');
   }
 
   /*
@@ -230,13 +231,13 @@ const baseNouns = [
     // Special-case small passages: try to hit them with a single sentence.
     if (targetWords === 10) {
       // Use the dedicated 10-word template for better reliability.
-      return generateTenWordSentence(maxWordLength) + '.';
+      return generateTenWordSentence(maxWordLength);
     } else if (targetWords <= 15) {
       while (safety < MAX_ITERATIONS) {
         safety += 1;
         const s = generateSentence(maxWordLength);
         if (countWords(s) === targetWords) {
-          return s + '.';
+          return s;
         }
       }
       // Fall through to the general multi-sentence search if we somehow didn't hit.
@@ -263,11 +264,36 @@ const baseNouns = [
       totalWords += sentenceWords;
     }
 
-    // Fallback: if we somehow couldn't hit the exact target, just join whatever we have.
+    // Fallback: if we somehow couldn't hit the exact target with the search above,
+    // build a passage and then enforce the exact word count as a final safety net.
+    let result;
     if (sentences.length === 0) {
-      return generateSentence(maxWordLength) + '.';
+      result = generateSentence(maxWordLength);
+    } else {
+      result = sentences.join('. ');
     }
 
-    return sentences.join('. ') + '.';
+    const words = result.trim().split(/\s+/).filter(Boolean);
+    if (words.length === targetWords) {
+      return result;
+    }
+
+    // If we somehow overshot, trim down to the requested count.
+    if (words.length > targetWords) {
+      return words.slice(0, targetWords).join(' ');
+    }
+
+    // If we are short, append extra words from freshly generated sentences
+    // until we reach exactly targetWords.
+    const filled = [...words];
+    while (filled.length < targetWords) {
+      const extraSentence = generateSentence(maxWordLength);
+      const extraWords = extraSentence.trim().split(/\s+/).filter(Boolean);
+      for (let i = 0; i < extraWords.length && filled.length < targetWords; i++) {
+        filled.push(extraWords[i]);
+      }
+    }
+
+    return filled.join(' ');
   }
   
