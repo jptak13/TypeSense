@@ -17,7 +17,7 @@
   --border:           #cccccc;
   --char-correct:     #222222;
   --char-untyped:     #bbbbbb;
-  --char-wrong-text:  #e53935;
+  --char-wrong-text:  #b71c1c;
   --char-wrong-bg:    #fce4e4;
   --success:          #2e7d32;
 }
@@ -35,7 +35,7 @@
     --border:           #3a3a3a;
     --char-correct:     #e0e0e0;
     --char-untyped:     #5a5a5a;
-    --char-wrong-text:  #fca5a5;
+    --char-wrong-text:  #ef4444;
     --char-wrong-bg:    #3b1212;
     --success:          #86efac;
   }
@@ -53,7 +53,7 @@ html[data-theme="dark"] {
   --border:           #3a3a3a;
   --char-correct:     #e0e0e0;
   --char-untyped:     #5a5a5a;
-  --char-wrong-text:  #fca5a5;
+  --char-wrong-text:  #ef4444;
   --char-wrong-bg:    #3b1212;
   --success:          #86efac;
 }
@@ -69,7 +69,7 @@ html[data-theme="light"] {
   --border:           #cccccc;
   --char-correct:     #222222;
   --char-untyped:     #bbbbbb;
-  --char-wrong-text:  #e53935;
+  --char-wrong-text:  #b71c1c;
   --char-wrong-bg:    #fce4e4;
   --success:          #2e7d32;
 }
@@ -200,7 +200,8 @@ body {
 .toolbar {
   display: flex;
   align-items: flex-start; /* align top edges so New Passage lines up with option bars */
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: 2.75rem; /* fixed gap so timer + mode block stay put */
   width: 97%;
   margin: 1rem auto 0.5rem;
   min-height: 4.25rem;
@@ -211,6 +212,10 @@ body {
   align-items: flex-start;
   gap: 0.75rem;
   margin-top: 0.15rem; /* nudge stats down so labels line up with MODE/LENGTH labels */
+  /* Lock overall width so changing total words / time doesn't shift layout */
+  flex: 0 0 11.5rem;
+  width: 11.5rem;
+  flex-shrink: 0;
 }
 
 .timer-stat {
@@ -218,6 +223,25 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 0.35rem;
+  /* Fixed width so WORDS/TIME and WPM never move horizontally
+     as their numeric values grow or shrink. */
+  flex: 0 0 7.5rem;
+  width: 7.5rem;
+  flex-shrink: 0;
+}
+
+.timer-group .timer-stat:first-child {
+  /* Slightly wider to comfortably fit the largest "XXX / YYY" or "MM:SS",
+     but pulled a bit left so we use more of the available space. */
+  flex: 0 0 7.5rem;
+  width: 7.5rem;
+}
+
+.timer-group .timer-stat:last-child {
+  /* WPM typically shorter (e.g. up to 3 digits), so this can be narrower and
+     sit closer to the left counter. */
+  flex: 0 0 3.5rem;
+  width: 3.5rem;
 }
 
 .timer-value {
@@ -228,6 +252,9 @@ body {
   letter-spacing: 0.05em;
   line-height: 1;
   margin-top: 0.1rem; /* nudge numbers down slightly */
+  display: inline-block;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .timer-label {
@@ -250,6 +277,7 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 0.6rem;
+  width: 100%;
 }
 
 .option-block {
@@ -259,13 +287,40 @@ body {
   gap: 0.2rem;
 }
 
+/* Keep the MODE toggle column at a fixed width, and let the LENGTH/DURATION
+   column expand to fill the remaining space. This prevents the mode buttons
+   from sliding horizontally when the right-hand controls change. */
+.test-options .option-block:first-child {
+  /* Narrower so the MODE picker sits closer to the timer block on the left. */
+  flex: 0 0 5.5rem;
+}
+
+.test-options .option-block:last-child {
+  flex: 1 1 auto;
+}
+
 .test-options-group {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.2rem;
-  min-width: 18rem;
+  /* Fixed width so the Words/Time mode toggle stays in one place
+     regardless of whether presets or custom bars are active. */
+  width: 24rem;      /* wider so preset length labels fit on one line */
+  min-width: 24rem;
   min-height: 4rem;
+}
+
+/* Make preset LENGTH/DURATION pickers the same width as the custom bar. */
+.test-options .option-block:last-child .length-selector,
+.test-options .option-block:last-child .length-bar {
+  width: 100%;
+}
+
+.toolbar-actions {
+  margin-left: auto; /* pin Generate / New Passage to far right of toolbar */
+  display: flex;
+  align-items: flex-start;
 }
 
 .option-label {
@@ -273,6 +328,35 @@ body {
   font-weight: 600;
   letter-spacing: 0.1em;
   color: var(--text-muted);
+}
+
+/* Fine-tune label alignment under the preset bars without moving the bars. */
+.option-label-length {
+  display: inline-block;
+}
+
+/* Preset words bar: nudge LENGTH label slightly left */
+.length-selector-words + .option-label-length {
+  margin-left: -0.4rem;
+}
+
+/* Custom words bar: nudge LENGTH label right */
+.length-bar + .option-label-length {
+  margin-left: 1.2rem;
+}
+
+.option-label-duration {
+  display: inline-block;
+}
+
+/* Preset duration bar: nudge DURATION label slightly right */
+.length-selector:not(.length-selector-words) + .option-label-duration {
+  margin-left: 0.51rem;
+}
+
+/* Custom duration bar: nudge DURATION label right */
+.length-bar-duration + .option-label-duration {
+  margin-left: 1.35rem;
 }
 
 .mode-selector .length-btn {
@@ -284,7 +368,19 @@ body {
   border: 1.5px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
-  min-height: 2.5rem;
+  min-height: 2.5rem; /* canonical height for all top controls */
+}
+
+/* Make preset LENGTH/DURATION buttons stretch to fill the full bar width. */
+.test-options .option-block:last-child .length-selector .length-btn {
+  flex: 1 1 0;
+}
+
+/* Make each time-duration preset box slightly wider (without affecting
+   the words-length presets) by adding extra horizontal padding on
+   buttons that are NOT using the words-length selector. */
+.test-options .option-block:last-child .length-selector:not(.length-selector-words) .length-btn {
+  padding: 0.25rem 0.752rem;
 }
 
 .length-toggle {
@@ -292,7 +388,7 @@ body {
   border: 1.5px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
-  min-height: 2.2rem;
+  min-height: 2.5rem;
 }
 
 .length-toggle-btn {
@@ -322,7 +418,7 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 0.3rem 0.5rem;
+  padding: 0.25rem 0.5rem;
   min-height: 2.5rem;
   background: transparent;
   border: none;
@@ -352,15 +448,33 @@ body {
   font-weight: 600;
 }
 
+.duration-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.1; /* tighten vertical spacing between number and unit */
+}
+
+.duration-number {
+  font-weight: 700; /* bold number for emphasis */
+}
+
+.duration-unit {
+  font-size: 0.62rem; /* match the "words" caption size */
+  font-weight: 400;
+  margin-top: 0.05rem; /* small gap below the number, similar to words selector */
+}
+
 .length-words {
-  font-size: 0.7rem;
+  font-size: 0.62rem; /* slightly smaller so "250 words" fits comfortably */
   opacity: 0.75;
+  white-space: nowrap; /* keep "250 words" on a single line */
 }
 
 .new-passage-btn {
-  padding: 0.5rem 0.85rem;
+  padding: 0.25rem 0.85rem;
   font-size: 0.9rem;
-  min-height: 2.5rem;
+  min-height: 2.65rem; /* visually match MODE and length/duration selectors */
   width: 9rem; /* keep width stable between label changes */
   white-space: nowrap;
   font-family: inherit;
@@ -418,9 +532,17 @@ body {
 
 /* Slightly smaller buttons for picking word-count lengths (xs / short / medium / etc) */
 .length-selector-words .length-btn {
-  padding: 0.2rem 0.4rem;
-  min-height: 2.1rem;
+  padding: 0.05rem 0.45rem; /* slightly less wide */
+  min-height: 2.5rem; /* keep height consistent with other selectors */
   font-size: 0.8rem;
+}
+
+/* Make the words-length preset bar a bit wider and explicitly shorter
+   than the default duration bar. */
+.length-selector-words {
+  width: 112%;
+  min-height: 2.5rem;
+  height: 2.5rem;
 }
 
 /* Bar-style controls for time/word lengths when enabled in settings */
@@ -430,13 +552,22 @@ body {
   gap: 0.35rem;
   border: 1.5px solid var(--border);
   border-radius: 8px;
-  padding: 0.15rem 0.4rem;
+  padding: 0.15rem 0.6rem; /* extend a bit further to the right */
   background: transparent;
+  min-height: 2.2rem; /* tuned height for custom sliders; presets unchanged */
+  margin-left: .96rem; /* move left edge slightly right */
+  margin-right: -.21rem; /* move right edge slightly left to narrow width */ 
+}
+
+/* Custom duration bar only: pull right edge left to increase gap to New Passage button */
+.length-bar-duration {
+  margin-right: -.517rem;
+  margin-left: .65rem; /* less left space; left edge closer to mode picker */
 }
 
 .length-bar-btn {
-  padding: 0.2rem 0.35rem;
-  min-height: 2rem;
+  padding: 0.12rem 0.35rem;
+  min-height: 1.6rem;
   min-width: 2.2rem;
   border-radius: 6px;
   border: none;
@@ -460,6 +591,7 @@ body {
   color: var(--text);
   min-width: 5.5rem;
   text-align: center;
+  flex: 1; /* center the text within the whole bar */
 }
 
 .length-bar-value.small {
@@ -516,8 +648,6 @@ body {
 
 .char-wrong {
   color: var(--char-wrong-text);
-  background-color: var(--char-wrong-bg);
-  border-radius: 2px;
 }
 
 .char-cursor {

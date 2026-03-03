@@ -22,10 +22,11 @@ const LENGTH_CONFIG = {
 };
 
 const TIME_OPTIONS = [
-  { seconds: 15,  label: '15s' },
-  { seconds: 30,  label: '30s' },
-  { seconds: 60,  label: '1m'  },
-  { seconds: 120, label: '2m'  },
+  { seconds: 5,   value: '5',  unit: 'seconds'  },
+  { seconds: 15,  value: '15', unit: 'seconds'  },
+  { seconds: 30,  value: '30', unit: 'seconds'  },
+  { seconds: 60,  value: '1',  unit: 'minute'   },
+  { seconds: 120, value: '2',  unit: 'minutes'  },
 ];
 
 // Long enough for ~150 WPM over 2 minutes (≈1800 chars)
@@ -196,8 +197,8 @@ function App() {
   };
 
   const handleTyping = (event) => {
-    // In create mode *before* a passage has been generated, reuse the main
-    // textbox as the prompt input with no length restriction.
+    // In Generation Mode = Create (before the first generation), we reuse the
+    // main textbox as the prompt input with no passage-length restriction.
     if (passageMode === 'create' && !hasGeneratedInCreateMode) {
       setPromptText(event.target.value);
       return;
@@ -218,6 +219,7 @@ function App() {
   };
 
   const handleModeChange = (newMode) => {
+    if (newMode === testMode) return; // already on this mode; don't change passage
     setTestMode(newMode);
     // Changing between words/time should reset the create-mode generation cycle.
     setHasGeneratedInCreateMode(false);
@@ -238,6 +240,7 @@ function App() {
   };
 
   const handleLengthChange = (newLength) => {
+    if (newLength === length) return; // already on this preset; don't regenerate
     setLength(newLength);
     // Switching length resets the create-mode cycle.
     setHasGeneratedInCreateMode(false);
@@ -249,6 +252,7 @@ function App() {
   };
 
   const handleTimeLimitChange = (newLimit) => {
+    if (newLimit === timeLimit) return; // already on this duration; don't regenerate
     setTimeLimit(newLimit);
     // Switching duration resets the create-mode cycle.
     setHasGeneratedInCreateMode(false);
@@ -263,7 +267,9 @@ function App() {
       resetPassage({ minChars: TIME_MODE_CHARS });
     } else {
       resetPassage({
-        exactWords: useBarControls ? customWordCount : LENGTH_CONFIG[length].words,
+        exactWords: useBarControls
+          ? customWordCount
+          : LENGTH_CONFIG[length].words,
       });
     }
   };
@@ -324,7 +330,7 @@ function App() {
       // passage (and displayed number) do not change.
       if (next === prev) return prev;
 
-      if (testMode === 'words' && useBarControls) {
+      if (passageMode === 'default' && testMode === 'words' && useBarControls) {
         resetPassage({ exactWords: next });
       }
       return next;
@@ -338,7 +344,7 @@ function App() {
       // passage and timer stay as-is.
       if (next === prev) return prev;
 
-      if (testMode === 'time') {
+      if (passageMode === 'default' && testMode === 'time') {
         // Regenerate a long passage for the new duration.
         resetPassage({ minChars: TIME_MODE_CHARS });
       }
@@ -350,13 +356,16 @@ function App() {
     setMaxWordLength((prev) => {
       // Max word length is clamped between 3 and 15 letters.
       const next = Math.min(15, Math.max(3, prev + delta));
+      if (next === prev) return prev; // at min or max; don't regenerate
       // Regenerate the current passage using the new cap so the effect is immediate.
-      if (testMode === 'words') {
+      if (passageMode === 'default' && testMode === 'words') {
         resetPassage({
-          exactWords: useBarControls ? customWordCount : LENGTH_CONFIG[length].words,
+          exactWords: useBarControls
+            ? customWordCount
+            : LENGTH_CONFIG[length].words,
           maxLetters: next,
         });
-      } else {
+      } else if (passageMode === 'default') {
         resetPassage({ minChars: TIME_MODE_CHARS, maxLetters: next });
       }
       return next;
@@ -383,21 +392,36 @@ function App() {
 
   // Words progress (words mode): how many completed words vs total in passage.
   const totalWords = targetSentence.trim().split(/\s+/).filter(Boolean).length;
+  // Only count a word as "completed" when it was typed correctly (userInput matches
+  // targetSentence up to and including the space after that word). This prevents
+  // WPM from going up when you just hit space without typing the word correctly.
   const completedWords = (() => {
     if (!userInput) return 0;
-    const spaceMatches = userInput.match(/ /g);
-    const count = spaceMatches ? spaceMatches.length : 0;
+    let count = 0;
+    for (let i = 0; i < targetSentence.length && i < userInput.length; i++) {
+      if (userInput[i] !== targetSentence[i]) break;
+      if (targetSentence[i] === ' ') count++;
+    }
     return Math.min(count, totalWords);
   })();
 
+  // For WPM we only count "committed" characters up to the last correctly completed word.
+  const lastCorrectSpaceIndex = (() => {
+    let last = -1;
+    for (let i = 0; i < targetSentence.length && i < userInput.length; i++) {
+      if (userInput[i] !== targetSentence[i]) break;
+      if (targetSentence[i] === ' ') last = i;
+    }
+    return last;
+  })();
+  const committedChars = lastCorrectSpaceIndex >= 0 ? lastCorrectSpaceIndex + 1 : 0;
+
   /*
     WHY — WPM update cadence:
-    - We only allow WPM to jump *up* when a full word is completed (space typed),
-      so mid-word keystrokes don't make the stat bounce around.
-    - Between word completions, WPM can drift downward as time elapses and the
-      same amount of committed text is spread over more seconds.
-    - We measure "committed" characters as everything up to the last space; any
-      partially-typed word is ignored until the space arrives.
+    - We only allow WPM to jump *up* when a full word is completed *correctly*
+      (space typed and everything before it matches the passage).
+    - Between word completions, WPM can drift downward as time elapses.
+    - "Committed" characters = only up to the last correctly completed word.
   */
   const [wpm, setWpm] = useState(0);
   const prevCompletedWordsRef = useRef(0);
@@ -408,9 +432,6 @@ function App() {
       prevCompletedWordsRef.current = completedWords;
       return;
     }
-
-    const lastSpaceIndex = userInput.lastIndexOf(' ');
-    const committedChars = lastSpaceIndex >= 0 ? lastSpaceIndex + 1 : 0;
 
     if (committedChars === 0) {
       // No complete words yet: let WPM decay toward 0 as time passes.
@@ -430,17 +451,17 @@ function App() {
     setWpm((prev) => {
       let next = prev;
       if (completedWords > prevCompleted) {
-        // New word finished: allow WPM to jump up to the latest value.
+        // New word finished correctly: allow WPM to jump up to the latest value.
         next = raw;
         prevCompletedWordsRef.current = completedWords;
       } else {
-        // No new word: WPM may only stay the same or decrease.
+        // No new correct word: WPM may only stay the same or decrease.
         next = Math.min(prev, raw);
       }
       if (!Number.isFinite(next) || next < 0) return 0;
       return next;
     });
-  }, [timeElapsed, userInput, completedWords]);
+  }, [timeElapsed, userInput, completedWords, committedChars]);
 
   return (
     <div className="app-container">
@@ -474,6 +495,38 @@ function App() {
                 <span className="settings-item-text">
                   {isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
                 </span>
+              </button>
+
+              <p className="settings-label">Generation Mode</p>
+              <button className="settings-item" type="button">
+                <span className="settings-item-text">Mode</span>
+                <div className="length-toggle">
+                  <button
+                    type="button"
+                    className={`length-toggle-btn${passageMode === 'default' ? ' active' : ''}`}
+                    onClick={() => {
+                      setPassageMode('default');
+                      setHasGeneratedInCreateMode(false);
+                    }}
+                  >
+                    Default
+                  </button>
+                  <button
+                    type="button"
+                    className={`length-toggle-btn${passageMode === 'create' ? ' active' : ''}`}
+                    onClick={() => {
+                      setPassageMode('create');
+                      setHasGeneratedInCreateMode(false);
+                      // Seed the prompt with whatever the user last typed,
+                      // so switching back and forth doesn't lose intent.
+                      if (!promptText && userInput) {
+                        setPromptText(userInput);
+                      }
+                    }}
+                  >
+                    Create
+                  </button>
+                </div>
               </button>
 
               <p className="settings-label">Length settings</p>
@@ -534,38 +587,6 @@ function App() {
                     +
                   </button>
                 </span>
-              </button>
-
-              <p className="settings-label">Passage source</p>
-              <button className="settings-item" type="button">
-                <span className="settings-item-text">Mode</span>
-                <div className="length-toggle">
-                  <button
-                    type="button"
-                    className={`length-toggle-btn${passageMode === 'default' ? ' active' : ''}`}
-                    onClick={() => {
-                      setPassageMode('default');
-                      setHasGeneratedInCreateMode(false);
-                    }}
-                  >
-                    Default
-                  </button>
-                  <button
-                    type="button"
-                    className={`length-toggle-btn${passageMode === 'create' ? ' active' : ''}`}
-                    onClick={() => {
-                      setPassageMode('create');
-                      setHasGeneratedInCreateMode(false);
-                      // Seed the prompt with whatever the user last typed,
-                      // so switching back and forth doesn't lose intent.
-                      if (!promptText && userInput) {
-                        setPromptText(userInput);
-                      }
-                    }}
-                  >
-                    Create
-                  </button>
-                </div>
               </button>
             </div>
           )}
@@ -662,6 +683,7 @@ function App() {
                             : key === 'xl'
                               ? 'XL'
                               : key.charAt(0).toUpperCase() + key.slice(1);
+                        const wordsShown = val.words;
                         return (
                           <button
                             key={key}
@@ -671,18 +693,18 @@ function App() {
                             <span className="length-label">
                               {label}
                             </span>
-                            <span className="length-words">~{val.words} words</span>
+                            <span className="length-words">{wordsShown} words</span>
                           </button>
                         );
                       })}
                     </div>
                   )}
-                  <span className="option-label">LENGTH</span>
+                  <span className="option-label option-label-length">LENGTH</span>
                 </>
               ) : (
                 <>
                   {useBarControls ? (
-                    <div className="length-bar">
+                    <div className="length-bar length-bar-duration">
                       <button
                         type="button"
                         className="length-bar-btn"
@@ -717,41 +739,46 @@ function App() {
                     </div>
                   ) : (
                     <div className="length-selector">
-                      {TIME_OPTIONS.map(({ seconds, label }) => (
+                      {TIME_OPTIONS.map(({ seconds, value, unit }) => (
                         <button
                           key={seconds}
                           className={`length-btn${timeLimit === seconds ? ' active' : ''}`}
                           onClick={() => handleTimeLimitChange(seconds)}
                         >
-                          <span className="length-label">{label}</span>
+                          <span className="length-label duration-label">
+                            <span className="duration-number">{value}</span>{' '}
+                            <span className="duration-unit">{unit}</span>
+                          </span>
                         </button>
                       ))}
                     </div>
                   )}
-                  <span className="option-label">DURATION</span>
+                  <span className="option-label option-label-duration">DURATION</span>
                 </>
               )}
             </div>
           </div>
         </div>
-        {passageMode === 'create' && (
-          <button
-            className="new-passage-btn"
-            onClick={hasGeneratedInCreateMode ? generateFromPrompt : handleGenerateButtonClick}
-            disabled={isGenerating}
-          >
-            {isGenerating
-              ? 'Generating...'
-              : hasGeneratedInCreateMode
-                ? 'New Passage ↺'
-                : 'Generate'}
-          </button>
-        )}
-        {passageMode === 'default' && (
-          <button className="new-passage-btn" onClick={handleNewPassage}>
-            New Passage ↺
-          </button>
-        )}
+        <div className="toolbar-actions">
+          {passageMode === 'create' && (
+            <button
+              className="new-passage-btn"
+              onClick={hasGeneratedInCreateMode ? generateFromPrompt : handleGenerateButtonClick}
+              disabled={isGenerating}
+            >
+              {isGenerating
+                ? 'Generating...'
+                : hasGeneratedInCreateMode
+                  ? 'New Passage ↺'
+                  : 'Generate'}
+            </button>
+          )}
+          {passageMode === 'default' && (
+            <button className="new-passage-btn" onClick={handleNewPassage}>
+              New Passage ↺
+            </button>
+          )}
+        </div>
       </div>
       <div className="typing-area-wrapper">
         {passageMode === 'create' && !hasGeneratedInCreateMode ? (
